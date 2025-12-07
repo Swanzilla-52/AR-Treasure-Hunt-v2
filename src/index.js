@@ -137,7 +137,7 @@ World.create(document.getElementById('scene-container'), {
   }
   updateScoreboard();
 
-  // ---------- TOKEN SPAWN ----------
+  // ---- TOKEN SPAWN ----
   function createToken() {
     const { scene: baseScene } = AssetManager.getGLTF('token');
     const tokenModel = baseScene.clone(true);
@@ -149,14 +149,16 @@ World.create(document.getElementById('scene-container'), {
     const z = (Math.random() - 0.5) * 10;
     tokenModel.position.set(x, y, z);
 
-    const tokenEntity = world.createTransformEntity(tokenModel);
+    // use a different name so we don't shadow the global
+    const newTokenEntity = world.createTransformEntity(tokenModel);
 
-    // OPTIONAL: still allow grabbing if you want
-    tokenEntity.addComponent(Interactable);
+    // make it interactable in XR
+    newTokenEntity.addComponent(Interactable);
 
-    tokenEntity.object3D.addEventListener("pointerdown", collectToken);
-
-    return tokenEntity;
+    // listen on the ENTITY, and use XR event
+    newTokenEntity.object3D.addEventListener('pointerdown', collectToken);
+  
+    return newTokenEntity;
   }
 
   function collectToken() {
