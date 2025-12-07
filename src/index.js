@@ -15,8 +15,6 @@ import {
   PhysicsShapeType, 
   PhysicsState, 
   PhysicsSystem,
-  createSystem,
-  OneHandGrabbable,
   DoubleSide,
   CanvasTexture,
   PlaneGeometry,
@@ -70,11 +68,28 @@ World.create(document.getElementById('scene-container'), {
     .registerComponent(PhysicsBody)
     .registerComponent(PhysicsShape);
 
-  // ---- sounds ----
+  // ---------- GROUND (walkable) ----------
+  const groundGeo = new PlaneGeometry(40, 40);
+  const groundMat = new MeshBasicMaterial({
+    color: 0x228B22,   // green-ish
+    side: DoubleSide,
+  });
+
+  const groundMesh = new Mesh(groundGeo, groundMat);
+  groundMesh.rotation.x = -Math.PI / 2; // lay flat
+  groundMesh.position.set(0, 0, 0);
+
+  world
+    .createTransformEntity(groundMesh)
+    .addComponent(LocomotionEnvironment, {
+      type: EnvironmentType.STATIC,   // walkable, static environment
+    });
+
+  // ---------- sounds ----------
   const collectSound = new Audio('/audio/collect.mp3');
   const victorySound = new Audio('/audio/victory.mp3');
 
-  // ---- SCOREBOARD SETUP ----
+  // ---------- SCOREBOARD SETUP ----------
   const canvas = document.createElement('canvas');
   canvas.width = 2048;
   canvas.height = 300;
@@ -122,9 +137,8 @@ World.create(document.getElementById('scene-container'), {
   }
   updateScoreboard();
 
-  // ---- TOKEN SPAWN ----
+  // ---------- TOKEN SPAWN ----------
   function createToken() {
-    // ✅ Get GLTF and clone its scene (this fixes the .clone error)
     const { scene: baseScene } = AssetManager.getGLTF('token');
     const tokenModel = baseScene.clone(true);
 
@@ -135,14 +149,14 @@ World.create(document.getElementById('scene-container'), {
     const z = (Math.random() - 0.5) * 10;
     tokenModel.position.set(x, y, z);
 
-    const token = world.createTransformEntity(tokenModel);
-    token.addComponent(Interactable);
-    token.addComponent(OneHandGrabbable, {
-      translate: true,
-      rotate: true,
-    });
+    const tokenEntity = world.createTransformEntity(tokenModel);
 
-    return token;
+    // OPTIONAL: still allow grabbing if you want
+    tokenEntity.addComponent(Interactable);
+
+    tokenEntity.object3D.addEventListener("pointerdown", collectToken);
+
+    return tokenEntity;
   }
 
   function collectToken() {
@@ -180,31 +194,11 @@ World.create(document.getElementById('scene-container'), {
     }, 200);
   }
 
-  // ---- SYSTEM: check when player is "collecting" the token ----
-  const TokenCollectSystem = class extends createSystem() {
-    update(delta, time) {
-      if (!tokenExists || !tokenEntity || gameOver) return;
-
-      const tokenPos = tokenEntity.object3D.position;
-      const playerPos = camera.position;
-
-      const dx = tokenPos.x - playerPos.x;
-      const dy = tokenPos.y - playerPos.y;
-      const dz = tokenPos.z - playerPos.z;
-      const distSq = dx*dx + dy*dy + dz*dz;
-
-      const collectRadius = 0.4; // how close you need to be to "collect"
-      if (distSq < collectRadius * collectRadius) {
-        collectToken();
-      }
-    }
-  };
-
-  // spawn first token + system
+  // ---------- INITIAL TOKEN ----------
   tokenEntity = createToken();
   tokenExists = true;
 
-  world.registerSystem(TokenCollectSystem);
+
 
   // vvvvvvvv EVERYTHING BELOW WAS ADDED TO DISPLAY A BUTTON TO ENTER VR FOR QUEST 1 DEVICES vvvvvv
   //          (for some reason IWSDK doesn't show Enter VR button on Quest 1)
