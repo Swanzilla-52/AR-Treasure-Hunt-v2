@@ -58,7 +58,6 @@ World.create(document.getElementById('scene-container'), {
   features: { 
     locomotion: true,
     grabbing: true, 
-    physics: true,
   },
 }).then((world) => {
   const { camera } = world;
@@ -142,37 +141,60 @@ World.create(document.getElementById('scene-container'), {
     const { scene: baseScene } = AssetManager.getGLTF('token');
     const tokenModel = baseScene.clone(true);
 
-    tokenModel.scale.setScalar(1.0);
+    // make the coin a bit bigger if you like
+    tokenModel.scale.setScalar(1.2);
 
     const x = (Math.random() - 0.5) * 10;
     const y = 0.5;
     const z = (Math.random() - 0.5) * 10;
     tokenModel.position.set(x, y, z);
 
-    // use a different name so we don't shadow the global
-    const newTokenEntity = world.createTransformEntity(tokenModel);
+    const entity = world.createTransformEntity(tokenModel);
 
-    // make it interactable in XR
-    newTokenEntity.addComponent(Interactable);
+    // make it grabbable / clickable in XR
+    entity.addComponent(Interactable);
 
-    // listen on the ENTITY, and use XR event
-    newTokenEntity.object3D.addEventListener('pointerdown', collectToken);
-  
-    return newTokenEntity;
+    // store a back-reference so we can get the entity from the event
+    tokenModel.userData.entity = entity;
+
+    // use the model's object3D as the event target
+    tokenModel.addEventListener('pointerdown', onTokenClicked);
+
+    return entity;
   }
 
-  function collectToken() {
-    if (!tokenExists || !tokenEntity || gameOver) return;
+  function onTokenClicked(event) {
+    if (gameOver) return;
 
-    tokenExists = false;
+    // whichever object was clicked
+    const obj = event.currentTarget || event.target;
+    const entity = obj.userData.entity;
 
+    if (!entity || entity.destroyed) return;
+
+    handleTokenCollected(entity);
+  }
+
+  function handleTokenCollected(entity) {
     // play collect sound
     collectSound.currentTime = 0;
     collectSound.play();
 
-    // destroy current token
-    tokenEntity.destroy();
-    tokenEntity = null;
+    // prevent double collection from multiple events
+    entity.object3D.removeEventListener('pointerdown', onTokenClicked);
+
+    // destroy on next tick so internal systems finish
+    setTimeout(() => {
+      if (!entity.destroyed) {
+        entity.destroy();
+      }
+    }, 0);
+
+    // update global reference (we only have one token at a time)
+    if (tokenEntity === entity) {
+      tokenEntity = null;
+    }
+    tokenExists = false;
 
     // update score
     score += 1;
@@ -187,7 +209,7 @@ World.create(document.getElementById('scene-container'), {
       return;
     }
 
-    // spawn next token
+    // spawn the next token after a short delay
     setTimeout(() => {
       if (!gameOver) {
         tokenEntity = createToken();
@@ -199,9 +221,6 @@ World.create(document.getElementById('scene-container'), {
   // ---------- INITIAL TOKEN ----------
   tokenEntity = createToken();
   tokenExists = true;
-
-
-
   // vvvvvvvv EVERYTHING BELOW WAS ADDED TO DISPLAY A BUTTON TO ENTER VR FOR QUEST 1 DEVICES vvvvvv
   //          (for some reason IWSDK doesn't show Enter VR button on Quest 1)
   world.registerSystem(PanelSystem);
