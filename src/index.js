@@ -1,36 +1,45 @@
-
-
 import {
   AssetType,
-  Mesh,
-  MeshBasicMaterial,
-  PlaneGeometry,
   SessionMode,
   SRGBColorSpace,
   AssetManager,
   World,
-  SphereGeometry,
   MeshStandardMaterial,
   LocomotionEnvironment,
   EnvironmentType,
   PanelUI,
   Interactable,
   ScreenSpace,
-  PhysicsBody, PhysicsShape, PhysicsShapeType, PhysicsState, PhysicsSystem,
-  createSystem
+  PhysicsBody, 
+  PhysicsShape, 
+  PhysicsShapeType, 
+  PhysicsState, 
+  PhysicsSystem,
+  createSystem,
+  OneHandGrabbable
 } from '@iwsdk/core';
 
 
 import { PanelSystem } from './panel.js';
+import { add } from 'three/tsl';
 
 
 const assets = {
-  chimeSound: {
-    url: '/audio/chime.mp3',
-    type: AssetType.Audio,
-    priority: 'background'
+  token: {
+    url: '/gltf/interesting_coin.glb',
+    type: AssetType.GLTF,
+    priority: 'critical',
   },
-
+  collectSound: {
+    url: '/audio/collect.mp3',
+    type: AssetType.Audio,
+    priority: 'critical',
+  },
+  victorySound: {
+    url: '/audio/victory.mp3',
+    type: AssetType.Audio,
+    priority: 'critical',
+  },
 };
 
 World.create(document.getElementById('scene-container'), {
@@ -41,47 +50,44 @@ World.create(document.getElementById('scene-container'), {
     // Optional structured features; layers/local-floor are offered by default
     features: { handTracking: true, layers: false } 
   },
-  features: { locomotion: { useWorker: true }, grabbing: true, physics: true},
-  level: '/glxf/Composition.glxf' 
+  features: { 
+    locomotion: true,
+    grabbing: true, 
+    physics: true,
+  },
+
 }).then((world) => {
   const { camera } = world;
   
-  // Create a green sphere
-  const sphereGeometry = new SphereGeometry(0.25, 32, 32);
-  const greenMaterial = new MeshStandardMaterial({ color: "red" });
-  const sphere = new Mesh(sphereGeometry, greenMaterial);
-  sphere.position.set(1, 1.5, -3);
-  const sphereEntity = world.createTransformEntity(sphere);
-  sphereEntity.addComponent(PhysicsShape, { shape: PhysicsShapeType.Auto,  density: 0.2,  friction: 0.5,  restitution: 0.9 });
-  sphereEntity.addComponent(PhysicsBody, { state: PhysicsState.Dynamic });
+  world
+  .registerSystem(PhysicsSystem)
+  .registerComponent(PhysicsBody)
+  .registerComponent(PhysicsShape);
 
-  // create a floor
-  const floorMesh = new Mesh(new PlaneGeometry(20, 20), new MeshStandardMaterial({color:"tan"}));
-  floorMesh.rotation.x = -Math.PI / 2;
-  const floorEntity = world.createTransformEntity(floorMesh);
-  floorEntity.addComponent(LocomotionEnvironment, { type: EnvironmentType.STATIC });
-  floorEntity.addComponent(PhysicsShape, { shape: PhysicsShapeType.Auto});
-  floorEntity.addComponent(PhysicsBody, { state: PhysicsState.Static });
+  const collectSound = new Audio('/audio/collect.mp3');
+  const victorySound = new Audio('/audio/victory.mp3');
 
-  let numBounces = 0;
+  const tokenModel = AssetManager.getGLTF('token').scene;
+  tokenModel.scale.setScalar(1.0);
+
+  for ( let i = 0; i < 5; i++){
+    const clone = tokenModel.clone(true);
+
+    const x = (Math.random() - 0.5) * 10;
+    const y = 0.5;
+    const z = (Math.random() - 0.5) * 10;
+
+    clone.position.set(x, y, z);
+
+    const token = world.createTransformEntity(clone);
+    token.addComponent(Interactable).addComponent(OneHandGrabbable);
+  }
+
   const GameLoopSystem = class extends createSystem() {
     update(delta, time) {
-      //console.log(sphereEntity.object3D.position.y);
-      if (sphereEntity.object3D.position.y < 0.27) {
-          numBounces += 1;
-          console.log(`Sphere has bounced ${numBounces} times`);
-          //sphereEntity.destroy()
-      }
-    }
+
   };
   world.registerSystem(GameLoopSystem);
-
-
-  
-  world.registerSystem(PhysicsSystem).registerComponent(PhysicsBody).registerComponent(PhysicsShape);
-  
-
-
 
 
 
