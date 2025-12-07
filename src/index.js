@@ -23,10 +23,8 @@ import {
   Mesh,
 } from '@iwsdk/core';
 
-
 import { PanelSystem } from './panel.js';
 import { add } from 'three/tsl';
-
 
 const assets = {
   token: {
@@ -46,12 +44,17 @@ const assets = {
   },
 };
 
+// ---- game state (global) ----
+let score = 0;
+let gameOver = false;
+let tokenEntity = null;
+let tokenExists = false;
+
 World.create(document.getElementById('scene-container'), {
   assets,
   xr: {
     sessionMode: SessionMode.ImmersiveVR,
     offer: 'always',
-    // Optional structured features; layers/local-floor are offered by default
     features: { handTracking: true, layers: false } 
   },
   features: { 
@@ -59,45 +62,24 @@ World.create(document.getElementById('scene-container'), {
     grabbing: true, 
     physics: true,
   },
-
 }).then((world) => {
   const { camera } = world;
   
   world
-  .registerSystem(PhysicsSystem)
-  .registerComponent(PhysicsBody)
-  .registerComponent(PhysicsShape);
+    .registerSystem(PhysicsSystem)
+    .registerComponent(PhysicsBody)
+    .registerComponent(PhysicsShape);
 
+  // ---- sounds ----
   const collectSound = new Audio('/audio/collect.mp3');
   const victorySound = new Audio('/audio/victory.mp3');
 
-  function createToken() {
-    const tokenModel = AssetManager.getGLTF('token').scene;
-      tokenModel.scale.setScalar(1.0);
-
-    const x = (Math.random() - 0.5) * 10;
-    const y = 0.5;
-    const z = (Math.random() - 0.5) * 10;
-
-    tokenModel.position.set(x, y, z);
-
-    const token = world.createTransformEntity(tokenModel);
-    token.addComponent(Interactable);
-  }
-
-  let ballEntity = null;
-  let sphereExists = false;
-  let gameOver = false;
-
+  // ---- SCOREBOARD SETUP ----
   const canvas = document.createElement('canvas');
   canvas.width = 2048;
   canvas.height = 300;
   const ctx = canvas.getContext('2d');
-  ctx.font = 'bold 120px sans-serif';
-  ctx.textAlign = 'center';
-  ctx.fillStyle = 'red';
-  ctx.fillText('Score: 0', canvas.width / 2, canvas.height / 2 + 16);
-  
+
   const texture = new CanvasTexture(canvas);
   const aspect = canvas.width / canvas.height;
   const boardWidth = 2;                 
@@ -106,7 +88,8 @@ World.create(document.getElementById('scene-container'), {
   const boardMat = new MeshBasicMaterial({ 
     map: texture, 
     transparent: true,  
-    side: DoubleSide,});
+    side: DoubleSide,
+  });
 
   const boardGeo = new PlaneGeometry(12, 1.5);
   const boardMesh = new Mesh(boardGeo, boardMat);
@@ -115,7 +98,6 @@ World.create(document.getElementById('scene-container'), {
   boardEntity.object3D.position.set(0, 5, -20);  
   boardEntity.object3D.visible = true; 
 
-  let score = 0;
   function updateScoreboard() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
@@ -140,10 +122,89 @@ World.create(document.getElementById('scene-container'), {
   }
   updateScoreboard();
 
-  
+  // ---- TOKEN SPAWN ----
+  function createToken() {
+    // ✅ Get GLTF and clone its scene (this fixes the .clone error)
+    const { scene: baseScene } = AssetManager.getGLTF('token');
+    const tokenModel = baseScene.clone(true);
 
+    tokenModel.scale.setScalar(1.0);
 
+    const x = (Math.random() - 0.5) * 10;
+    const y = 0.5;
+    const z = (Math.random() - 0.5) * 10;
+    tokenModel.position.set(x, y, z);
 
+    const token = world.createTransformEntity(tokenModel);
+    token.addComponent(Interactable);
+    token.addComponent(OneHandGrabbable, {
+      translate: true,
+      rotate: true,
+    });
+
+    return token;
+  }
+
+  function collectToken() {
+    if (!tokenExists || !tokenEntity || gameOver) return;
+
+    tokenExists = false;
+
+    // play collect sound
+    collectSound.currentTime = 0;
+    collectSound.play();
+
+    // destroy current token
+    tokenEntity.destroy();
+    tokenEntity = null;
+
+    // update score
+    score += 1;
+    updateScoreboard();
+
+    // win condition
+    if (score >= 10) {
+      gameOver = true;
+      updateScoreboard();
+      victorySound.currentTime = 0;
+      victorySound.play();
+      return;
+    }
+
+    // spawn next token
+    setTimeout(() => {
+      if (!gameOver) {
+        tokenEntity = createToken();
+        tokenExists = true;
+      }
+    }, 200);
+  }
+
+  // ---- SYSTEM: check when player is "collecting" the token ----
+  const TokenCollectSystem = class extends createSystem() {
+    update(delta, time) {
+      if (!tokenExists || !tokenEntity || gameOver) return;
+
+      const tokenPos = tokenEntity.object3D.position;
+      const playerPos = camera.position;
+
+      const dx = tokenPos.x - playerPos.x;
+      const dy = tokenPos.y - playerPos.y;
+      const dz = tokenPos.z - playerPos.z;
+      const distSq = dx*dx + dy*dy + dz*dz;
+
+      const collectRadius = 0.4; // how close you need to be to "collect"
+      if (distSq < collectRadius * collectRadius) {
+        collectToken();
+      }
+    }
+  };
+
+  // spawn first token + system
+  tokenEntity = createToken();
+  tokenExists = true;
+
+  world.registerSystem(TokenCollectSystem);
 
   // vvvvvvvv EVERYTHING BELOW WAS ADDED TO DISPLAY A BUTTON TO ENTER VR FOR QUEST 1 DEVICES vvvvvv
   //          (for some reason IWSDK doesn't show Enter VR button on Quest 1)
