@@ -4,7 +4,7 @@ import {
   SRGBColorSpace,
   AssetManager,
   World,
-  MeshStandardMaterial,
+  MeshBasicMaterial,
   LocomotionEnvironment,
   EnvironmentType,
   PanelUI,
@@ -16,7 +16,11 @@ import {
   PhysicsState, 
   PhysicsSystem,
   createSystem,
-  OneHandGrabbable
+  OneHandGrabbable,
+  DoubleSide,
+  CanvasTexture,
+  PlaneGeometry,
+  Mesh,
 } from '@iwsdk/core';
 
 
@@ -67,27 +71,77 @@ World.create(document.getElementById('scene-container'), {
   const collectSound = new Audio('/audio/collect.mp3');
   const victorySound = new Audio('/audio/victory.mp3');
 
-  const tokenModel = AssetManager.getGLTF('token').scene;
-  tokenModel.scale.setScalar(1.0);
-
-  for ( let i = 0; i < 5; i++){
-    const clone = tokenModel.clone(true);
+  function createToken() {
+    const tokenModel = AssetManager.getGLTF('token').scene;
+      tokenModel.scale.setScalar(1.0);
 
     const x = (Math.random() - 0.5) * 10;
     const y = 0.5;
     const z = (Math.random() - 0.5) * 10;
 
-    clone.position.set(x, y, z);
+    tokenModel.position.set(x, y, z);
 
-    const token = world.createTransformEntity(clone);
-    token.addComponent(Interactable).addComponent(OneHandGrabbable);
+    const token = world.createTransformEntity(tokenModel);
+    token.addComponent(Interactable);
   }
 
-  const GameLoopSystem = class extends createSystem() {
-    update(delta, time) {
+  let ballEntity = null;
+  let sphereExists = false;
+  let gameOver = false;
 
-  };
-  world.registerSystem(GameLoopSystem);
+  const canvas = document.createElement('canvas');
+  canvas.width = 2048;
+  canvas.height = 300;
+  const ctx = canvas.getContext('2d');
+  ctx.font = 'bold 120px sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillStyle = 'red';
+  ctx.fillText('Score: 0', canvas.width / 2, canvas.height / 2 + 16);
+  
+  const texture = new CanvasTexture(canvas);
+  const aspect = canvas.width / canvas.height;
+  const boardWidth = 2;                 
+  const boardHeight = boardWidth / aspect;
+  
+  const boardMat = new MeshBasicMaterial({ 
+    map: texture, 
+    transparent: true,  
+    side: DoubleSide,});
+
+  const boardGeo = new PlaneGeometry(12, 1.5);
+  const boardMesh = new Mesh(boardGeo, boardMat);
+  const boardEntity = world.createTransformEntity(boardMesh);
+
+  boardEntity.object3D.position.set(0, 5, -20);  
+  boardEntity.object3D.visible = true; 
+
+  let score = 0;
+  function updateScoreboard() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    if (gameOver) {
+      ctx.font = 'bold 200px sans-serif';
+      ctx.fillStyle = 'red';
+      ctx.textAlign = 'center';
+      ctx.fillText('YOU WIN', canvas.width / 2, canvas.height / 2 + 50);
+    } else {
+      ctx.font = 'bold 150px sans-serif';
+      ctx.fillStyle = 'green';
+      ctx.textAlign = 'center';
+      ctx.fillText('COLLECT THE COINS', canvas.width / 2, canvas.height / 2 + 40);
+    }
+
+    ctx.font = 'bold 120px sans-serif';
+    ctx.fillStyle = 'green';
+    ctx.textAlign = 'center';
+    ctx.fillText(`COLLECTED: ${score}`, canvas.width / 2, canvas.height - 10);
+
+    texture.needsUpdate = true;
+  }
+  updateScoreboard();
+
+  
+
 
 
 
