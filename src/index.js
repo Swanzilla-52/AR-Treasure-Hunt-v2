@@ -10,20 +10,23 @@ import {
   PanelUI,
   Interactable,
   ScreenSpace,
-  PhysicsBody, 
-  PhysicsShape, 
-  PhysicsShapeType, 
-  PhysicsState, 
+  PhysicsBody,
+  PhysicsShape,
+  PhysicsShapeType,
+  PhysicsState,
   PhysicsSystem,
   DoubleSide,
   CanvasTexture,
   PlaneGeometry,
   Mesh,
+  createSystem,
+  Vector3,
 } from '@iwsdk/core';
 
 import { PanelSystem } from './panel.js';
 import { add } from 'three/tsl';
 
+// ---- assets ----
 const assets = {
   token: {
     url: '/gltf/interesting_coin.glb',
@@ -45,32 +48,29 @@ const assets = {
 // ---- game state (global) ----
 let score = 0;
 let gameOver = false;
-let tokenEntity = null;
-let tokenExists = false;
+const activeTokens = []; // track all live coins
 
 World.create(document.getElementById('scene-container'), {
   assets,
   xr: {
     sessionMode: SessionMode.ImmersiveVR,
     offer: 'always',
-    features: { handTracking: true, layers: false } 
+    features: { handTracking: true, layers: false },
   },
-  features: { 
+  features: {
     locomotion: true,
-    grabbing: true, 
+    grabbing: true,
+    physics: true,
   },
 }).then((world) => {
   const { camera } = world;
-  
-  world
-    .registerSystem(PhysicsSystem)
-    .registerComponent(PhysicsBody)
-    .registerComponent(PhysicsShape);
 
   // ---------- GROUND (walkable) ----------
   const groundGeo = new PlaneGeometry(40, 40);
   const groundMat = new MeshBasicMaterial({
-    color: 0x228B22,   // green-ish
+    color: 0x228b22, // green-ish
+    transparent: true,
+    opacity: 0,
     side: DoubleSide,
   });
 
@@ -81,7 +81,7 @@ World.create(document.getElementById('scene-container'), {
   world
     .createTransformEntity(groundMesh)
     .addComponent(LocomotionEnvironment, {
-      type: EnvironmentType.STATIC,   // walkable, static environment
+      type: EnvironmentType.STATIC,
     });
 
   // ---------- sounds ----------
@@ -95,13 +95,10 @@ World.create(document.getElementById('scene-container'), {
   const ctx = canvas.getContext('2d');
 
   const texture = new CanvasTexture(canvas);
-  const aspect = canvas.width / canvas.height;
-  const boardWidth = 2;                 
-  const boardHeight = boardWidth / aspect;
-  
-  const boardMat = new MeshBasicMaterial({ 
-    map: texture, 
-    transparent: true,  
+
+  const boardMat = new MeshBasicMaterial({
+    map: texture,
+    transparent: true,
     side: DoubleSide,
   });
 
@@ -109,22 +106,28 @@ World.create(document.getElementById('scene-container'), {
   const boardMesh = new Mesh(boardGeo, boardMat);
   const boardEntity = world.createTransformEntity(boardMesh);
 
-  boardEntity.object3D.position.set(0, 5, -20);  
-  boardEntity.object3D.visible = true; 
+  boardEntity.object3D.position.set(0, 5, -20);
+  boardEntity.object3D.visible = true;
 
   function updateScoreboard() {
+    if (!ctx) return;
+
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
     if (gameOver) {
       ctx.font = 'bold 200px sans-serif';
-      ctx.fillStyle = 'red';
+      ctx.fillStyle = 'green';
       ctx.textAlign = 'center';
       ctx.fillText('YOU WIN', canvas.width / 2, canvas.height / 2 + 50);
     } else {
       ctx.font = 'bold 150px sans-serif';
       ctx.fillStyle = 'green';
       ctx.textAlign = 'center';
-      ctx.fillText('COLLECT THE COINS', canvas.width / 2, canvas.height / 2 + 40);
+      ctx.fillText(
+        'COLLECT THE COINS',
+        canvas.width / 2,
+        canvas.height / 2 + 40
+      );
     }
 
     ctx.font = 'bold 120px sans-serif';
@@ -136,12 +139,13 @@ World.create(document.getElementById('scene-container'), {
   }
   updateScoreboard();
 
-  // ---- TOKEN SPAWN ----
+  // ---------- TOKEN SPAWN ----------
   function createToken() {
-    const { scene: baseScene } = AssetManager.getGLTF('token');
+    const gltf = AssetManager.getGLTF('token');
+    const baseScene = gltf.scene;
     const tokenModel = baseScene.clone(true);
 
-    // make the coin a bit bigger if you like
+    // make the coin easy to see
     tokenModel.scale.setScalar(1.2);
 
     const x = (Math.random() - 0.5) * 10;
@@ -151,57 +155,50 @@ World.create(document.getElementById('scene-container'), {
 
     const entity = world.createTransformEntity(tokenModel);
 
-    // make it grabbable / clickable in XR
+    // optional: still allow grabbing
     entity.addComponent(Interactable);
 
-    // store a back-reference so we can get the entity from the event
+    // link back for debugging / extensions
+    tokenModel.userData = tokenModel.userData || {};
     tokenModel.userData.entity = entity;
 
-    // use the model's object3D as the event target
-    tokenModel.addEventListener('pointerdown', onTokenClicked);
+    // track this token
+    activeTokens.push(entity);
+
+    console.log('Spawned token at', x, y, z);
 
     return entity;
   }
 
-  function onTokenClicked(event) {
+  // ---------- CORE COLLECTION LOGIC FOR ONE TOKEN ----------
+  function collectSpecificToken(entity) {
     if (gameOver) return;
-
-    // whichever object was clicked
-    const obj = event.currentTarget || event.target;
-    const entity = obj.userData.entity;
-
     if (!entity || entity.destroyed) return;
 
-    handleTokenCollected(entity);
-  }
+    // remove from active list
+    const idx = activeTokens.indexOf(entity);
+    if (idx !== -1) {
+      activeTokens.splice(idx, 1);
+    }
 
-  function handleTokenCollected(entity) {
     // play collect sound
     collectSound.currentTime = 0;
     collectSound.play();
 
-    // prevent double collection from multiple events
-    entity.object3D.removeEventListener('pointerdown', onTokenClicked);
-
-    // destroy on next tick so internal systems finish
+    // destroy safely on next tick
     setTimeout(() => {
       if (!entity.destroyed) {
         entity.destroy();
       }
     }, 0);
 
-    // update global reference (we only have one token at a time)
-    if (tokenEntity === entity) {
-      tokenEntity = null;
-    }
-    tokenExists = false;
-
-    // update score
+    // score + UI
     score += 1;
+    console.log('Collected token, score =', score);
     updateScoreboard();
 
     // win condition
-    if (score >= 10) {
+    if (score >= 5) {
       gameOver = true;
       updateScoreboard();
       victorySound.currentTime = 0;
@@ -209,18 +206,55 @@ World.create(document.getElementById('scene-container'), {
       return;
     }
 
-    // spawn the next token after a short delay
+    // spawn a replacement
     setTimeout(() => {
       if (!gameOver) {
-        tokenEntity = createToken();
-        tokenExists = true;
+        createToken();
       }
     }, 200);
   }
 
+  // ---------- COLLISION SYSTEM: CAMERA vs ALL TOKENS (WORLD SPACE) ----------
+  const _playerPos = new Vector3();
+  const _tokenPos = new Vector3();
+
+  const CoinCollectSystem = class extends createSystem() {
+    update(delta, time) {
+      if (gameOver) return;
+      if (activeTokens.length === 0) return;
+
+      // world position of camera (player)
+      camera.getWorldPosition(_playerPos);
+
+      const radius = 1.5; // how close you must be to collect
+      const radiusSq = radius * radius;
+
+      for (let i = 0; i < activeTokens.length; i++) {
+        const entity = activeTokens[i];
+        if (!entity || entity.destroyed) continue;
+
+        entity.object3D.getWorldPosition(_tokenPos);
+
+        const dx = _tokenPos.x - _playerPos.x;
+        const dy = _tokenPos.y - _playerPos.y;
+        const dz = _tokenPos.z - _playerPos.z;
+        const distSq = dx * dx + dy * dy + dz * dz;
+
+        if (distSq < radiusSq) {
+          console.log('Collision: collecting token');
+          collectSpecificToken(entity);
+          break; // only one per frame
+        }
+      }
+    }
+  };
+
+  world.registerSystem(CoinCollectSystem);
+
   // ---------- INITIAL TOKEN ----------
-  tokenEntity = createToken();
-  tokenExists = true;
+  createToken();
+
+
   // vvvvvvvv EVERYTHING BELOW WAS ADDED TO DISPLAY A BUTTON TO ENTER VR FOR QUEST 1 DEVICES vvvvvv
   //          (for some reason IWSDK doesn't show Enter VR button on Quest 1)
   world.registerSystem(PanelSystem);
