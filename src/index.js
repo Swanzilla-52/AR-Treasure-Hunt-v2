@@ -48,7 +48,11 @@ const assets = {
 // ---- game state (global) ----
 let score = 0;
 let gameOver = false;
-const activeTokens = []; // track all live coins
+const activeTokens = []; 
+let timerStarted = false;
+let timerFinished = false;
+let timerStartMs = 0;
+let timerCurrentMs = 0;
 
 World.create(document.getElementById('scene-container'), {
   assets,
@@ -139,6 +143,83 @@ World.create(document.getElementById('scene-container'), {
   }
   updateScoreboard();
 
+    // ---------- SKY TIMER SETUP ----------
+  const timerCanvas = document.createElement('canvas');
+  timerCanvas.width = 1024;
+  timerCanvas.height = 256;
+  const timerCtx = timerCanvas.getContext('2d');
+
+  const timerTexture = new CanvasTexture(timerCanvas);
+
+  const timerMat = new MeshBasicMaterial({
+    map: timerTexture,
+    transparent: true,
+    side: DoubleSide,
+  });
+
+  // width 10, height ~2 – a long banner in the sky
+  const timerGeo = new PlaneGeometry(10, 2);
+  const timerMesh = new Mesh(timerGeo, timerMat);
+  const timerEntity = world.createTransformEntity(timerMesh);
+
+  // put it “in the sky” in front of the player
+  timerEntity.object3D.position.set(0, 10, -25);
+  timerEntity.object3D.visible = true;
+
+  function formatTime(ms) {
+    const totalSeconds = ms / 1000;
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds - minutes * 60;
+    const minStr = String(minutes).padStart(2, '0');
+    const secStr = seconds.toFixed(2).padStart(5, '0'); // e.g. "07.32"
+    return `${minStr}:${secStr}`;
+  }
+
+  function updateTimerBoard() {
+    if (!timerCtx) return;
+
+    timerCtx.clearRect(0, 0, timerCanvas.width, timerCanvas.height);
+
+    timerCtx.font = 'bold 120px sans-serif';
+    timerCtx.fillStyle = 'green';
+    timerCtx.textAlign = 'center';
+
+    if (!timerStarted) {
+      timerCtx.fillText(
+        'TIME: 00:00.00',
+        timerCanvas.width / 2,
+        timerCanvas.height / 2 + 40
+      );
+    } else {
+      const displayMs = timerFinished
+        ? timerCurrentMs
+        : Date.now() - timerStartMs;
+
+      const timeText = `TIME: ${formatTime(displayMs)}`;
+      timerCtx.fillText(
+        timeText,
+        timerCanvas.width / 2,
+        timerCanvas.height / 2 + 40
+      );
+    }
+
+    timerTexture.needsUpdate = true;
+  }
+
+  // draw the initial timer text
+  updateTimerBoard();
+
+    // ---------- TIMER UPDATE SYSTEM ----------
+  const TimerSystem = class extends createSystem() {
+    update(delta, time) {
+      if (!timerStarted || timerFinished) return;
+      timerCurrentMs = Date.now() - timerStartMs;
+      updateTimerBoard();
+    }
+  };
+
+  world.registerSystem(TimerSystem);
+
   // ---------- TOKEN SPAWN ----------
   function createToken() {
     const gltf = AssetManager.getGLTF('token');
@@ -196,6 +277,24 @@ World.create(document.getElementById('scene-container'), {
     score += 1;
     console.log('Collected token, score =', score);
     updateScoreboard();
+
+        // ---- TIMER HOOKS ----
+    // start timer when first coin is collected
+    if (score === 1 && !timerStarted) {
+      timerStarted = true;
+      timerFinished = false;
+      timerStartMs = Date.now();
+      timerCurrentMs = 0;
+      updateTimerBoard();
+    }
+
+    // stop timer when fifth coin is collected
+    if (score === 5 && timerStarted && !timerFinished) {
+      timerFinished = true;
+      timerCurrentMs = Date.now() - timerStartMs;
+      updateTimerBoard(); // freeze final time on the board
+    }
+    // ----------------------
 
     // win condition
     if (score >= 5) {
