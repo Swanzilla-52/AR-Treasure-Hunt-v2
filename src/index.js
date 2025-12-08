@@ -5,25 +5,16 @@ import {
   AssetManager,
   World,
   MeshBasicMaterial,
-  LocomotionEnvironment,
-  EnvironmentType,
-  PanelUI,
   Interactable,
-  ScreenSpace,
-  PhysicsBody,
-  PhysicsShape,
-  PhysicsShapeType,
-  PhysicsState,
-  PhysicsSystem,
-  DoubleSide,
   CanvasTexture,
   PlaneGeometry,
   Mesh,
+  DoubleSide,
   createSystem,
   Vector3,
 } from '@iwsdk/core';
 
-import { PanelSystem } from './panel.js';
+import { PanelSystem } from './panel.js'; // fine to keep, even if unused
 import { add } from 'three/tsl';
 
 // ---- assets ----
@@ -48,7 +39,9 @@ const assets = {
 // ---- game state (global) ----
 let score = 0;
 let gameOver = false;
-const activeTokens = []; 
+const activeTokens = [];
+
+// ---- timer state (global) ----
 let timerStarted = false;
 let timerFinished = false;
 let timerStartMs = 0;
@@ -57,36 +50,31 @@ let timerCurrentMs = 0;
 World.create(document.getElementById('scene-container'), {
   assets,
   xr: {
-    sessionMode: SessionMode.ImmersiveVR,
+    sessionMode: SessionMode.ImmersiveAR, // AR instead of VR
     offer: 'always',
     features: { handTracking: true, layers: false },
   },
   features: {
-    locomotion: true,
-    grabbing: true,
-    physics: true,
+    grabbing: true, // no locomotion/physics; AR uses real movement
   },
 }).then((world) => {
   const { camera } = world;
 
-  // ---------- GROUND (walkable) ----------
+  // ---------- OPTIONAL "GROUND" (fully transparent) ----------
+  // This just gives you a reference plane if you ever want it.
+  // It is invisible in AR but could be used for placing things.
   const groundGeo = new PlaneGeometry(40, 40);
   const groundMat = new MeshBasicMaterial({
-    color: 0x228b22, // green-ish
-    transparent: true,
-    opacity: 0,
+    color: 0x228b22,
     side: DoubleSide,
+    transparent: true,
+    opacity: 0.0, // 0 = fully invisible
   });
 
   const groundMesh = new Mesh(groundGeo, groundMat);
-  groundMesh.rotation.x = -Math.PI / 2; // lay flat
+  groundMesh.rotation.x = -Math.PI / 2;
   groundMesh.position.set(0, 0, 0);
-
-  world
-    .createTransformEntity(groundMesh)
-    .addComponent(LocomotionEnvironment, {
-      type: EnvironmentType.STATIC,
-    });
+  world.createTransformEntity(groundMesh);
 
   // ---------- sounds ----------
   const collectSound = new Audio('/audio/collect.mp3');
@@ -106,11 +94,12 @@ World.create(document.getElementById('scene-container'), {
     side: DoubleSide,
   });
 
-  const boardGeo = new PlaneGeometry(12, 1.5);
+  const boardGeo = new PlaneGeometry(1.8, 0.25); // smaller for AR
   const boardMesh = new Mesh(boardGeo, boardMat);
   const boardEntity = world.createTransformEntity(boardMesh);
 
-  boardEntity.object3D.position.set(0, 5, -20);
+  // Put scoreboard about 1.2m high and 2m in front of camera origin
+  boardEntity.object3D.position.set(0, 1.2, -2);
   boardEntity.object3D.visible = true;
 
   function updateScoreboard() {
@@ -120,7 +109,7 @@ World.create(document.getElementById('scene-container'), {
 
     if (gameOver) {
       ctx.font = 'bold 200px sans-serif';
-      ctx.fillStyle = 'green';
+      ctx.fillStyle = 'red';
       ctx.textAlign = 'center';
       ctx.fillText('YOU WIN', canvas.width / 2, canvas.height / 2 + 50);
     } else {
@@ -143,7 +132,7 @@ World.create(document.getElementById('scene-container'), {
   }
   updateScoreboard();
 
-    // ---------- SKY TIMER SETUP ----------
+  // ---------- SKY TIMER SETUP ----------
   const timerCanvas = document.createElement('canvas');
   timerCanvas.width = 1024;
   timerCanvas.height = 256;
@@ -157,13 +146,12 @@ World.create(document.getElementById('scene-container'), {
     side: DoubleSide,
   });
 
-  // width 10, height ~2 – a long banner in the sky
-  const timerGeo = new PlaneGeometry(10, 2);
+  const timerGeo = new PlaneGeometry(1.8, 0.35);
   const timerMesh = new Mesh(timerGeo, timerMat);
   const timerEntity = world.createTransformEntity(timerMesh);
 
-  // put it “in the sky” in front of the player
-  timerEntity.object3D.position.set(0, 10, -25);
+  // Slightly above the scoreboard
+  timerEntity.object3D.position.set(0, 1.6, -2.1);
   timerEntity.object3D.visible = true;
 
   function formatTime(ms) {
@@ -206,10 +194,9 @@ World.create(document.getElementById('scene-container'), {
     timerTexture.needsUpdate = true;
   }
 
-  // draw the initial timer text
   updateTimerBoard();
 
-    // ---------- TIMER UPDATE SYSTEM ----------
+  // ---------- TIMER UPDATE SYSTEM ----------
   const TimerSystem = class extends createSystem() {
     update(delta, time) {
       if (!timerStarted || timerFinished) return;
@@ -217,7 +204,6 @@ World.create(document.getElementById('scene-container'), {
       updateTimerBoard();
     }
   };
-
   world.registerSystem(TimerSystem);
 
   // ---------- TOKEN SPAWN ----------
@@ -226,24 +212,22 @@ World.create(document.getElementById('scene-container'), {
     const baseScene = gltf.scene;
     const tokenModel = baseScene.clone(true);
 
-    // make the coin easy to see
-    tokenModel.scale.setScalar(1.2);
+    tokenModel.scale.setScalar(0.4); // smaller for AR
 
-    const x = (Math.random() - 0.5) * 10;
-    const y = 0.5;
-    const z = (Math.random() - 0.5) * 10;
+    // Spawn within a small region in front of the camera origin
+    const x = (Math.random() - 0.5) * 1.5; // -0.75 to 0.75m horizontally
+    const y = 0.5 + Math.random() * 0.5;   // 0.5–1.0m high
+    const z = -1.5 - Math.random();        // 1.5–2.5m in front
     tokenModel.position.set(x, y, z);
 
     const entity = world.createTransformEntity(tokenModel);
 
-    // optional: still allow grabbing
+    // Allow grabbing if you want
     entity.addComponent(Interactable);
 
-    // link back for debugging / extensions
     tokenModel.userData = tokenModel.userData || {};
     tokenModel.userData.entity = entity;
 
-    // track this token
     activeTokens.push(entity);
 
     console.log('Spawned token at', x, y, z);
@@ -273,12 +257,12 @@ World.create(document.getElementById('scene-container'), {
       }
     }, 0);
 
-    // score + UI
+    // update score
     score += 1;
     console.log('Collected token, score =', score);
     updateScoreboard();
 
-        // ---- TIMER HOOKS ----
+    // ---- TIMER HOOKS ----
     // start timer when first coin is collected
     if (score === 1 && !timerStarted) {
       timerStarted = true;
@@ -292,11 +276,11 @@ World.create(document.getElementById('scene-container'), {
     if (score === 5 && timerStarted && !timerFinished) {
       timerFinished = true;
       timerCurrentMs = Date.now() - timerStartMs;
-      updateTimerBoard(); // freeze final time on the board
+      updateTimerBoard(); // freeze time
     }
     // ----------------------
 
-    // win condition
+    // win condition at 10 coins
     if (score >= 5) {
       gameOver = true;
       updateScoreboard();
@@ -313,7 +297,7 @@ World.create(document.getElementById('scene-container'), {
     }, 200);
   }
 
-  // ---------- COLLISION SYSTEM: CAMERA vs ALL TOKENS (WORLD SPACE) ----------
+  // ---------- COLLISION SYSTEM: CAMERA vs ALL TOKENS ----------
   const _playerPos = new Vector3();
   const _tokenPos = new Vector3();
 
@@ -325,7 +309,7 @@ World.create(document.getElementById('scene-container'), {
       // world position of camera (player)
       camera.getWorldPosition(_playerPos);
 
-      const radius = 1.5; // how close you must be to collect
+      const radius = 0.4; // ~40cm radius
       const radiusSq = radius * radius;
 
       for (let i = 0; i < activeTokens.length; i++) {
@@ -352,7 +336,6 @@ World.create(document.getElementById('scene-container'), {
 
   // ---------- INITIAL TOKEN ----------
   createToken();
-
 
   // vvvvvvvv EVERYTHING BELOW WAS ADDED TO DISPLAY A BUTTON TO ENTER VR FOR QUEST 1 DEVICES vvvvvv
   //          (for some reason IWSDK doesn't show Enter VR button on Quest 1)
